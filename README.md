@@ -227,3 +227,28 @@
 - API仕様（OpenAPI）
 - 仕訳入力画面のUIモック
 までこのリポジトリに追加できます。
+
+## 10. 実装開始（バックエンド雛形）
+
+このリポジトリには、MVP着手用のFastAPIバックエンド雛形を追加しています。
+
+- `GET /health` : ヘルスチェック
+- `POST /accounts` / `GET /accounts` : 勘定科目管理
+- `POST /journals` / `GET /journals` : 仕訳ヘッダ管理
+- `POST /journals/{journal_id}/lines` : 仕訳明細追加
+- `POST /attachments` : 証憑メタデータ紐付け
+
+### ローカル起動例
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -e .[dev]
+uvicorn app.main:app --reload
+```
+
+### テスト実行例
+
+```bash
+pytest
+```
