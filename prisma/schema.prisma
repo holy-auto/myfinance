@@ -1,0 +1,380 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ============================================================
+// 勘定科目 (Chart of Accounts)
+// ============================================================
+enum AccountType {
+  ASSET
+  LIABILITY
+  EQUITY
+  REVENUE
+  EXPENSE
+}
+
+enum NormalBalance {
+  DEBIT
+  CREDIT
+}
+
+model Account {
+  id            String        @id @default(uuid())
+  code          String        @unique
+  name          String
+  nameEn        String?
+  type          AccountType
+  normalBalance NormalBalance
+  category      String?
+  parentId      String?
+  parent        Account?      @relation("AccountTree", fields: [parentId], references: [id])
+  children      Account[]     @relation("AccountTree")
+  level         Int           @default(0)
+  isActive      Boolean       @default(true)
+  isSummary     Boolean       @default(false)
+  taxCategoryId String?
+  description   String?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  journalLines  JournalLine[]
+  budgetPlans   BudgetPlan[]
+
+  @@index([type])
+  @@index([parentId])
+  @@index([code])
+}
+
+// ============================================================
+// 仕訳 (Journal Entries)
+// ============================================================
+enum EntryStatus {
+  DRAFT
+  PENDING_APPROVAL
+  APPROVED
+  REJECTED
+  REVERSED
+}
+
+enum EntrySource {
+  MANUAL
+  CSV_IMPORT
+  AUTO_RULE
+  BANK_SYNC
+  REVERSAL
+}
+
+model JournalEntry {
+  id             String        @id @default(uuid())
+  entryNumber    String        @unique
+  entryDate      DateTime
+  description    String
+  status         EntryStatus   @default(DRAFT)
+  isReversal     Boolean       @default(false)
+  reversalOfId   String?       @unique
+  reversalOf     JournalEntry? @relation("ReversalEntry", fields: [reversalOfId], references: [id])
+  reversedBy     JournalEntry? @relation("ReversalEntry")
+  fiscalYear     Int
+  fiscalMonth    Int
+  source         EntrySource   @default(MANUAL)
+  businessUnitId String?
+  businessUnit   BusinessUnit? @relation(fields: [businessUnitId], references: [id])
+  projectId      String?
+  project        Project?      @relation(fields: [projectId], references: [id])
+  createdById    String
+  createdBy      User          @relation("CreatedEntries", fields: [createdById], references: [id])
+  approvedById   String?
+  approvedBy     User?         @relation("ApprovedEntries", fields: [approvedById], references: [id])
+  approvedAt     DateTime?
+  rejectedReason String?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  lines          JournalLine[]
+  attachments    EntryAttachment[]
+
+  @@index([fiscalYear, fiscalMonth])
+  @@index([status])
+  @@index([entryDate])
+  @@index([createdById])
+}
+
+model JournalLine {
+  id             String        @id @default(uuid())
+  journalEntryId String
+  journalEntry   JournalEntry  @relation(fields: [journalEntryId], references: [id], onDelete: Cascade)
+  accountId      String
+  account        Account       @relation(fields: [accountId], references: [id])
+  debit          Decimal       @default(0) @db.Decimal(18, 2)
+  credit         Decimal       @default(0) @db.Decimal(18, 2)
+  description    String?
+  taxCategory    String?
+  departmentId   String?
+  department     Department?   @relation(fields: [departmentId], references: [id])
+  businessUnitId String?
+  businessUnit   BusinessUnit? @relation(fields: [businessUnitId], references: [id])
+  projectId      String?
+  project        Project?      @relation(fields: [projectId], references: [id])
+  lineOrder      Int           @default(0)
+  createdAt      DateTime      @default(now())
+
+  @@index([journalEntryId])
+  @@index([accountId])
+  @@index([departmentId])
+  @@index([businessUnitId])
+}
+
+// ============================================================
+// 証憑 (Attachments / Documents)
+// ============================================================
+enum OcrStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+model Attachment {
+  id           String    @id @default(uuid())
+  fileName     String
+  fileSize     Int
+  mimeType     String
+  storageKey   String
+  storageUrl   String?
+  ocrStatus    OcrStatus @default(PENDING)
+  ocrData      Json?
+  uploadedById String
+  uploadedBy   User      @relation(fields: [uploadedById], references: [id])
+  createdAt    DateTime  @default(now())
+
+  journalEntries EntryAttachment[]
+}
+
+model EntryAttachment {
+  journalEntryId String
+  journalEntry   JournalEntry @relation(fields: [journalEntryId], references: [id], onDelete: Cascade)
+  attachmentId   String
+  attachment     Attachment   @relation(fields: [attachmentId], references: [id])
+
+  @@id([journalEntryId, attachmentId])
+}
+
+// ============================================================
+// 月次締め (Closing Periods)
+// ============================================================
+enum ClosingStatus {
+  OPEN
+  CLOSING
+  CLOSED
+}
+
+model ClosingPeriod {
+  id          String        @id @default(uuid())
+  fiscalYear  Int
+  fiscalMonth Int
+  status      ClosingStatus @default(OPEN)
+  closedById  String?
+  closedBy    User?         @relation(fields: [closedById], references: [id])
+  closedAt    DateTime?
+  reopenedAt  DateTime?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  @@unique([fiscalYear, fiscalMonth])
+}
+
+// ============================================================
+// 組織 (Department / Business Unit / Project)
+// ============================================================
+model Department {
+  id        String   @id @default(uuid())
+  code      String   @unique
+  name      String
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  journalLines JournalLine[]
+}
+
+model BusinessUnit {
+  id        String   @id @default(uuid())
+  code      String   @unique
+  name      String
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  journalEntries JournalEntry[]
+  journalLines   JournalLine[]
+  kpiSnapshots   KpiSnapshot[]
+  budgetPlans    BudgetPlan[]
+}
+
+model Project {
+  id        String    @id @default(uuid())
+  code      String    @unique
+  name      String
+  isActive  Boolean   @default(true)
+  startDate DateTime?
+  endDate   DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  journalEntries JournalEntry[]
+  journalLines   JournalLine[]
+}
+
+// ============================================================
+// 認証・権限 (Users / Roles / RBAC)
+// ============================================================
+model User {
+  id           String    @id @default(uuid())
+  email        String    @unique
+  name         String
+  passwordHash String?
+  mfaEnabled   Boolean   @default(false)
+  mfaSecret    String?
+  isActive     Boolean   @default(true)
+  lastLoginAt  DateTime?
+  allowedIps   String[]
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  roles          UserRole[]
+  createdEntries JournalEntry[]  @relation("CreatedEntries")
+  approvedEntries JournalEntry[] @relation("ApprovedEntries")
+  attachments    Attachment[]
+  closingPeriods ClosingPeriod[]
+  auditLogs      AuditLog[]
+
+  // Auth.js relations
+  accounts       AuthAccount[]
+  sessions       Session[]
+}
+
+model Role {
+  id          String   @id @default(uuid())
+  name        String   @unique
+  description String
+  permissions String[]
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  users UserRole[]
+}
+
+model UserRole {
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  roleId       String
+  role         Role     @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  assignedAt   DateTime @default(now())
+  assignedById String?
+
+  @@id([userId, roleId])
+}
+
+// ============================================================
+// Auth.js Models
+// ============================================================
+model AuthAccount {
+  id                String  @id @default(uuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@map("auth_accounts")
+}
+
+model Session {
+  id           String   @id @default(uuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+// ============================================================
+// 監査ログ (Audit Log)
+// ============================================================
+model AuditLog {
+  id         String   @id @default(uuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id])
+  action     String
+  entityType String
+  entityId   String
+  changes    Json?
+  ipAddress  String?
+  userAgent  String?
+  createdAt  DateTime @default(now())
+
+  @@index([entityType, entityId])
+  @@index([userId])
+  @@index([createdAt])
+}
+
+// ============================================================
+// 経営指標 (KPI / Budget)
+// ============================================================
+enum PeriodType {
+  DAILY
+  MONTHLY
+  QUARTERLY
+  YEARLY
+}
+
+model KpiSnapshot {
+  id             String        @id @default(uuid())
+  snapshotDate   DateTime
+  metric         String
+  value          Decimal       @db.Decimal(18, 2)
+  businessUnitId String?
+  businessUnit   BusinessUnit? @relation(fields: [businessUnitId], references: [id])
+  periodType     PeriodType
+  createdAt      DateTime      @default(now())
+
+  @@index([metric, snapshotDate])
+  @@index([businessUnitId])
+}
+
+model BudgetPlan {
+  id             String        @id @default(uuid())
+  fiscalYear     Int
+  fiscalMonth    Int
+  accountId      String
+  account        Account       @relation(fields: [accountId], references: [id])
+  businessUnitId String?
+  businessUnit   BusinessUnit? @relation(fields: [businessUnitId], references: [id])
+  amount         Decimal       @db.Decimal(18, 2)
+  description    String?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  @@unique([fiscalYear, fiscalMonth, accountId, businessUnitId])
+}
