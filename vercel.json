@@ -1,0 +1,18 @@
+{
+  "functions": {
+    "api/index.py": {
+      "runtime": "python3.11"
+    }
+  },
+  "env": {
+    "VERCEL": "1",
+    "INIT_DB_ON_STARTUP": "0",
+    "AUTO_MIGRATE": "0"
+  },
+  "routes": [
+    {
+      "src": "/(.*)",
+      "dest": "api/index.py"
+    }
+  ]
+}
