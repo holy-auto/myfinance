@@ -6,6 +6,7 @@ import { prisma } from "@/lib/prisma";
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
   adapter: PrismaAdapter(prisma) as ReturnType<typeof PrismaAdapter>,
+  trustHost: true,
   session: { strategy: "jwt" },
   pages: {
     signIn: "/login",
@@ -38,14 +39,19 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           data: { lastLoginAt: new Date() },
         });
 
+        // permissions はカンマ区切り文字列で保存されている
+        const allPermissions = user.roles.flatMap(
+          (ur: { role: { permissions: string } }) =>
+            ur.role.permissions.split(",").map((p: string) => p.trim()).filter(Boolean)
+        );
+        const uniquePermissions = [...new Set(allPermissions)];
+
         return {
           id: user.id,
           email: user.email,
           name: user.name,
           roles: user.roles.map((ur: { role: { name: string } }) => ur.role.name),
-          permissions: user.roles.flatMap(
-            (ur: { role: { permissions: string[] } }) => ur.role.permissions
-          ),
+          permissions: uniquePermissions,
         };
       },
     }),
