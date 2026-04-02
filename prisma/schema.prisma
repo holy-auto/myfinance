@@ -4,12 +4,10 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
+  provider = "sqlite"
+
 }
 
-// ============================================================
-// 勘定科目 (Chart of Accounts)
-// ============================================================
 enum AccountType {
   ASSET
   LIABILITY
@@ -50,9 +48,6 @@ model Account {
   @@index([code])
 }
 
-// ============================================================
-// 仕訳 (Journal Entries)
-// ============================================================
 enum EntryStatus {
   DRAFT
   PENDING_APPROVAL
@@ -110,8 +105,8 @@ model JournalLine {
   journalEntry   JournalEntry  @relation(fields: [journalEntryId], references: [id], onDelete: Cascade)
   accountId      String
   account        Account       @relation(fields: [accountId], references: [id])
-  debit          Decimal       @default(0) @db.Decimal(18, 2)
-  credit         Decimal       @default(0) @db.Decimal(18, 2)
+  debit          Decimal       @default(0)
+  credit         Decimal       @default(0)
   description    String?
   taxCategory    String?
   departmentId   String?
@@ -129,9 +124,6 @@ model JournalLine {
   @@index([businessUnitId])
 }
 
-// ============================================================
-// 証憑 (Attachments / Documents)
-// ============================================================
 enum OcrStatus {
   PENDING
   PROCESSING
@@ -147,7 +139,7 @@ model Attachment {
   storageKey   String
   storageUrl   String?
   ocrStatus    OcrStatus @default(PENDING)
-  ocrData      Json?
+  ocrData      String?
   uploadedById String
   uploadedBy   User      @relation(fields: [uploadedById], references: [id])
   createdAt    DateTime  @default(now())
@@ -164,9 +156,6 @@ model EntryAttachment {
   @@id([journalEntryId, attachmentId])
 }
 
-// ============================================================
-// 月次締め (Closing Periods)
-// ============================================================
 enum ClosingStatus {
   OPEN
   CLOSING
@@ -188,9 +177,6 @@ model ClosingPeriod {
   @@unique([fiscalYear, fiscalMonth])
 }
 
-// ============================================================
-// 組織 (Department / Business Unit / Project)
-// ============================================================
 model Department {
   id        String   @id @default(uuid())
   code      String   @unique
@@ -230,9 +216,6 @@ model Project {
   journalLines   JournalLine[]
 }
 
-// ============================================================
-// 認証・権限 (Users / Roles / RBAC)
-// ============================================================
 model User {
   id           String    @id @default(uuid())
   email        String    @unique
@@ -242,27 +225,25 @@ model User {
   mfaSecret    String?
   isActive     Boolean   @default(true)
   lastLoginAt  DateTime?
-  allowedIps   String[]
+  allowedIps   String    @default("")
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
 
-  roles          UserRole[]
-  createdEntries JournalEntry[]  @relation("CreatedEntries")
-  approvedEntries JournalEntry[] @relation("ApprovedEntries")
-  attachments    Attachment[]
-  closingPeriods ClosingPeriod[]
-  auditLogs      AuditLog[]
-
-  // Auth.js relations
-  accounts       AuthAccount[]
-  sessions       Session[]
+  roles           UserRole[]
+  createdEntries  JournalEntry[]  @relation("CreatedEntries")
+  approvedEntries JournalEntry[]  @relation("ApprovedEntries")
+  attachments     Attachment[]
+  closingPeriods  ClosingPeriod[]
+  auditLogs       AuditLog[]
+  accounts        AuthAccount[]
+  sessions        Session[]
 }
 
 model Role {
   id          String   @id @default(uuid())
   name        String   @unique
   description String
-  permissions String[]
+  permissions String
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
@@ -280,9 +261,6 @@ model UserRole {
   @@id([userId, roleId])
 }
 
-// ============================================================
-// Auth.js Models
-// ============================================================
 model AuthAccount {
   id                String  @id @default(uuid())
   userId            String
@@ -319,9 +297,6 @@ model VerificationToken {
   @@unique([identifier, token])
 }
 
-// ============================================================
-// 監査ログ (Audit Log)
-// ============================================================
 model AuditLog {
   id         String   @id @default(uuid())
   userId     String
@@ -329,7 +304,7 @@ model AuditLog {
   action     String
   entityType String
   entityId   String
-  changes    Json?
+  changes    String?
   ipAddress  String?
   userAgent  String?
   createdAt  DateTime @default(now())
@@ -339,9 +314,6 @@ model AuditLog {
   @@index([createdAt])
 }
 
-// ============================================================
-// 経営指標 (KPI / Budget)
-// ============================================================
 enum PeriodType {
   DAILY
   MONTHLY
@@ -353,7 +325,7 @@ model KpiSnapshot {
   id             String        @id @default(uuid())
   snapshotDate   DateTime
   metric         String
-  value          Decimal       @db.Decimal(18, 2)
+  value          Decimal
   businessUnitId String?
   businessUnit   BusinessUnit? @relation(fields: [businessUnitId], references: [id])
   periodType     PeriodType
@@ -371,7 +343,7 @@ model BudgetPlan {
   account        Account       @relation(fields: [accountId], references: [id])
   businessUnitId String?
   businessUnit   BusinessUnit? @relation(fields: [businessUnitId], references: [id])
-  amount         Decimal       @db.Decimal(18, 2)
+  amount         Decimal
   description    String?
   createdAt      DateTime      @default(now())
   updatedAt      DateTime      @updatedAt

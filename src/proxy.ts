@@ -1,9 +1,8 @@
-import { getToken } from "next-auth/jwt";
 import { NextRequest, NextResponse } from "next/server";
 
-const publicPaths = ["/login", "/api/auth"];
+const publicPaths = ["/login", "/api/auth", "/api/debug"];
 
-export async function middleware(req: NextRequest) {
+export async function proxy(req: NextRequest) {
   const { pathname } = req.nextUrl;
 
   // Allow public paths
@@ -20,9 +19,16 @@ export async function middleware(req: NextRequest) {
     return NextResponse.next();
   }
 
-  // Stateless JWT check — no Prisma, Edge-compatible
-  const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET });
-  if (!token) {
+  // next-auth v5 (Auth.js) のセッションCookie名
+  // HTTP環境: authjs.session-token
+  // HTTPS環境: __Secure-authjs.session-token
+  const secureCookieName = "__Secure-authjs.session-token";
+  const regularCookieName = "authjs.session-token";
+
+  const sessionCookie =
+    req.cookies.get(secureCookieName) ?? req.cookies.get(regularCookieName);
+
+  if (!sessionCookie?.value) {
     const loginUrl = new URL("/login", req.url);
     loginUrl.searchParams.set("callbackUrl", pathname);
     return NextResponse.redirect(loginUrl);
