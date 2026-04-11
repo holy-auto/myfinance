@@ -61,7 +61,7 @@ export function Access() {
       <SectionHeader
         eyebrow="Access"
         title="アクセス・営業時間"
-        description="JR渋谷駅から徒歩8分。駐車スペースあり。事前予約でスムーズにご案内します。"
+        description="さいたま市岩槻区末田にある完全予約制のプライベートクリニックです。駐車スペースあり。お気軽にお問い合わせください。"
       />
 
       <div className="mt-10 grid gap-6 lg:grid-cols-[1.3fr_1fr]">

@@ -4,36 +4,38 @@ import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { CalendarCheck, Loader2 } from "lucide-react";
 import {
-  carSizes,
   menus,
-  options,
+  serviceCategories,
+  carSizes,
   timeSlots,
-  type CarSize,
   type MenuId,
-  type OptionId,
+  type CarSize,
+  type ServiceCategory,
 } from "../data";
 import { SectionHeader } from "./services";
 import { cn } from "@/lib/utils";
 
-const yen = (n: number) => `¥${Math.round(n).toLocaleString("ja-JP")}`;
-
-/** 今日から14日後までの日付を返す（定休日は除外） */
+/** 今日から最大30日先まで日付を返す */
 function nextDates(count: number) {
   const days: Date[] = [];
-  const d = new Date();
-  d.setHours(0, 0, 0, 0);
-  for (let i = 0; i < 30 && days.length < count; i++) {
-    const candidate = new Date(d);
-    candidate.setDate(d.getDate() + i);
-    days.push(candidate);
+  const base = new Date();
+  base.setHours(0, 0, 0, 0);
+  for (let i = 1; days.length < count; i++) {
+    const d = new Date(base);
+    d.setDate(base.getDate() + i);
+    days.push(d);
+    if (i > 60) break;
   }
   return days;
 }
 
+const DAY_SHORT = ["日", "月", "火", "水", "木", "金", "土"] as const;
+const simCats = serviceCategories.filter((c) => c.id !== "b2b");
+
 export function BookingForm() {
+  const [category, setCategory] = useState<ServiceCategory>("wash");
+  const [menuId, setMenuId] = useState<MenuId>("wash-full");
   const [size, setSize] = useState<CarSize>("S");
-  const [menuId, setMenuId] = useState<MenuId>("premium");
-  const [selectedOptions, setSelectedOptions] = useState<Set<OptionId>>(new Set());
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
   const [email, setEmail] = useState("");
@@ -43,45 +45,34 @@ export function BookingForm() {
     d.setDate(d.getDate() + 1);
     return d.toISOString().slice(0, 10);
   });
-  const [time, setTime] = useState<string>("10:00");
+  const [time, setTime] = useState("10:00");
   const [notes, setNotes] = useState("");
   const [loading, setLoading] = useState(false);
 
-  // 料金シミュレーターから遷移してきたら値をプリフィル
+  // シミュレーターからのプリフィル
   useEffect(() => {
     const handler = (e: Event) => {
-      const detail = (e as CustomEvent<{
-        menuId: MenuId;
-        size: CarSize;
-        options: OptionId[];
-      }>).detail;
+      const detail = (e as CustomEvent<{ menuId: MenuId; category: ServiceCategory }>).detail;
       if (!detail) return;
+      setCategory(detail.category);
       setMenuId(detail.menuId);
-      setSize(detail.size);
-      setSelectedOptions(new Set(detail.options));
       toast.success("シミュレーターの内容を予約フォームに反映しました");
     };
     window.addEventListener("carwash:prefill-booking", handler);
     return () => window.removeEventListener("carwash:prefill-booking", handler);
   }, []);
 
-  const menu = useMemo(() => menus.find((m) => m.id === menuId)!, [menuId]);
-  const sizeItem = useMemo(() => carSizes.find((c) => c.id === size)!, [size]);
-  const optionTotal = options
-    .filter((o) => selectedOptions.has(o.id))
-    .reduce((s, o) => s + o.price, 0);
-  const total = menu.basePrice * sizeItem.multiplier + optionTotal;
+  // カテゴリー変更時はメニューをリセット
+  const categoryMenus = useMemo(
+    () => menus.filter((m) => m.category === category),
+    [category],
+  );
+  const selectedMenu = useMemo(
+    () => menus.find((m) => m.id === menuId) ?? categoryMenus[0],
+    [menuId, categoryMenus],
+  );
 
   const dateOptions = useMemo(() => nextDates(14), []);
-
-  const toggleOption = (id: OptionId) => {
-    setSelectedOptions((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  };
 
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -90,15 +81,11 @@ export function BookingForm() {
       return;
     }
     setLoading(true);
-    // モック送信: 本番では /api/v1/carwash-booking 等に POST
+    // モック送信（本番では /api/v1/carwash-booking 等に POST）
     await new Promise((r) => setTimeout(r, 800));
     setLoading(false);
     toast.success("ご予約を受け付けました。折り返しご連絡いたします。");
-    setName("");
-    setPhone("");
-    setEmail("");
-    setCarModel("");
-    setNotes("");
+    setName(""); setPhone(""); setEmail(""); setCarModel(""); setNotes("");
   };
 
   return (
@@ -109,90 +96,96 @@ export function BookingForm() {
       <div className="mx-auto max-w-4xl px-4">
         <SectionHeader
           eyebrow="Booking"
-          title="オンライン予約"
-          description="必要事項を入力するだけ、30秒で送信完了。内容確認のため後ほど担当よりご連絡します。"
+          title="無料カウンセリング・予約"
+          description="希望の施術とご都合を入力して送信するだけ。後ほど院長より確認のご連絡をいたします。"
         />
 
         <form
           onSubmit={onSubmit}
           className="mt-10 space-y-7 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm sm:p-8"
         >
-          {/* Menu summary - 現在の選択を可視化 */}
-          <div className="rounded-xl border border-sky-100 bg-sky-50/70 p-4">
-            <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
-              <div>
-                <span className="font-semibold text-slate-900">{menu.name}</span>
-                <span className="ml-2 text-slate-500">/ {sizeItem.label}</span>
+          {/* Selected menu summary */}
+          {selectedMenu && (
+            <div className="rounded-xl border border-sky-100 bg-sky-50/70 p-4 text-sm">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <span className="font-semibold text-slate-900">{selectedMenu.name}</span>
+                  <span className="ml-2 text-slate-500">{selectedMenu.duration}</span>
+                </div>
+                <div className="text-base font-bold text-sky-700">{selectedMenu.priceLabel}</div>
               </div>
-              <div className="text-lg font-bold text-sky-700">{yen(total)}</div>
             </div>
-            {selectedOptions.size > 0 && (
-              <div className="mt-2 flex flex-wrap gap-1.5">
-                {options
-                  .filter((o) => selectedOptions.has(o.id))
-                  .map((o) => (
-                    <span
-                      key={o.id}
-                      className="inline-flex items-center rounded-full bg-white px-2 py-0.5 text-[11px] font-medium text-sky-800 ring-1 ring-sky-200"
-                    >
-                      {o.label}
-                    </span>
-                  ))}
-              </div>
-            )}
-          </div>
+          )}
+
+          {/* Category */}
+          <Field label="施術カテゴリー" required>
+            <div className="flex flex-wrap gap-2">
+              {simCats.map((cat) => (
+                <button
+                  key={cat.id}
+                  type="button"
+                  onClick={() => {
+                    setCategory(cat.id);
+                    const first = menus.find((m) => m.category === cat.id);
+                    if (first) setMenuId(first.id);
+                  }}
+                  className={cn(
+                    "inline-flex h-9 items-center gap-1 rounded-full border px-3 text-xs font-medium transition-colors",
+                    category === cat.id
+                      ? "border-sky-500 bg-sky-500 text-white"
+                      : "border-slate-300 bg-white text-slate-700 hover:border-sky-400",
+                  )}
+                >
+                  <span aria-hidden>{cat.icon}</span>
+                  {cat.short}
+                </button>
+              ))}
+            </div>
+          </Field>
+
+          {/* Menu within category */}
+          <Field label="メニュー" required>
+            <div className="grid gap-2 sm:grid-cols-2">
+              {categoryMenus.map((m) => (
+                <button
+                  key={m.id}
+                  type="button"
+                  onClick={() => setMenuId(m.id)}
+                  className={cn(
+                    "flex items-start justify-between rounded-xl border px-4 py-3 text-left transition-colors",
+                    menuId === m.id
+                      ? "border-sky-500 bg-sky-50 ring-2 ring-sky-200"
+                      : "border-slate-300 bg-white hover:border-sky-400",
+                  )}
+                >
+                  <span className="text-sm font-medium text-slate-900">{m.name}</span>
+                  <span className="ml-2 text-xs font-semibold text-slate-700 whitespace-nowrap">
+                    {m.priceLabel}
+                  </span>
+                </button>
+              ))}
+            </div>
+          </Field>
 
           {/* Car size */}
-          <Field label="車種サイズ" required>
+          <Field label="車種サイズ（参考）" required>
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
               {carSizes.map((c) => (
-                <ChoiceButton
+                <button
                   key={c.id}
-                  active={size === c.id}
+                  type="button"
                   onClick={() => setSize(c.id)}
+                  className={cn(
+                    "flex flex-col items-start rounded-xl border px-3 py-3 text-left transition-colors",
+                    size === c.id
+                      ? "border-sky-500 bg-sky-50 ring-2 ring-sky-200"
+                      : "border-slate-300 bg-white hover:border-sky-400",
+                  )}
                 >
-                  {c.label}
-                </ChoiceButton>
+                  <span className="text-sm font-semibold text-slate-900">{c.label}</span>
+                  <span className="mt-0.5 text-[11px] text-slate-500">{c.desc}</span>
+                </button>
               ))}
-            </div>
-          </Field>
-
-          {/* Menu */}
-          <Field label="メニュー" required>
-            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-              {menus.map((m) => (
-                <ChoiceButton
-                  key={m.id}
-                  active={menuId === m.id}
-                  onClick={() => setMenuId(m.id)}
-                >
-                  {m.name}
-                </ChoiceButton>
-              ))}
-            </div>
-          </Field>
-
-          {/* Options */}
-          <Field label="オプション（任意・複数可）">
-            <div className="flex flex-wrap gap-2">
-              {options.map((o) => {
-                const active = selectedOptions.has(o.id);
-                return (
-                  <button
-                    key={o.id}
-                    type="button"
-                    onClick={() => toggleOption(o.id)}
-                    className={cn(
-                      "inline-flex h-9 items-center gap-1 rounded-full border px-3 text-xs font-medium transition-colors",
-                      active
-                        ? "border-sky-500 bg-sky-500 text-white"
-                        : "border-slate-300 bg-white text-slate-700 hover:border-sky-400",
-                    )}
-                  >
-                    {o.label} +{yen(o.price)}
-                  </button>
-                );
-              })}
             </div>
           </Field>
 
@@ -206,12 +199,8 @@ export function BookingForm() {
               >
                 {dateOptions.map((d) => {
                   const iso = d.toISOString().slice(0, 10);
-                  const label = `${d.getMonth() + 1}/${d.getDate()}(${["日", "月", "火", "水", "木", "金", "土"][d.getDay()]})`;
-                  return (
-                    <option key={iso} value={iso}>
-                      {label}
-                    </option>
-                  );
+                  const label = `${d.getMonth() + 1}/${d.getDate()}(${DAY_SHORT[d.getDay()]})`;
+                  return <option key={iso} value={iso}>{label}</option>;
                 })}
               </select>
             </Field>
@@ -239,43 +228,26 @@ export function BookingForm() {
           {/* Customer info */}
           <div className="grid gap-4 sm:grid-cols-2">
             <Field label="お名前" required>
-              <TextInput
-                value={name}
-                onChange={setName}
-                placeholder="山田 太郎"
-                autoComplete="name"
-              />
+              <TextInput value={name} onChange={setName} placeholder="山田 太郎" autoComplete="name" />
             </Field>
             <Field label="電話番号" required>
-              <TextInput
-                value={phone}
-                onChange={setPhone}
-                placeholder="090-0000-0000"
-                type="tel"
-                autoComplete="tel"
-              />
+              <TextInput value={phone} onChange={setPhone} placeholder="090-0000-0000" type="tel" autoComplete="tel" />
             </Field>
             <Field label="メールアドレス">
-              <TextInput
-                value={email}
-                onChange={setEmail}
-                placeholder="taro@example.com"
-                type="email"
-                autoComplete="email"
-              />
+              <TextInput value={email} onChange={setEmail} placeholder="taro@example.com" type="email" autoComplete="email" />
             </Field>
-            <Field label="車種(例: ヤリス 2021)">
+            <Field label="車種（例：ヤリス 2021年式）">
               <TextInput value={carModel} onChange={setCarModel} placeholder="車名・年式など" />
             </Field>
           </div>
 
-          <Field label="ご要望・メモ">
+          <Field label="ご要望・状態メモ">
             <textarea
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
               rows={3}
               className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm focus:border-sky-500 focus:outline-none focus:ring-2 focus:ring-sky-200"
-              placeholder="気になる汚れ、希望ブランドなどあればご記入ください"
+              placeholder="気になる傷・汚れ・シミ、ご要望があればご記入ください"
             />
           </Field>
 
@@ -284,15 +256,11 @@ export function BookingForm() {
             disabled={loading}
             className="inline-flex h-12 w-full items-center justify-center gap-2 rounded-full bg-gradient-to-r from-sky-500 to-cyan-500 text-base font-semibold text-white shadow-lg shadow-sky-500/30 transition-transform hover:scale-[1.01] disabled:opacity-60"
           >
-            {loading ? (
-              <Loader2 className="h-5 w-5 animate-spin" />
-            ) : (
-              <CalendarCheck className="h-5 w-5" />
-            )}
-            この内容で予約する
+            {loading ? <Loader2 className="h-5 w-5 animate-spin" /> : <CalendarCheck className="h-5 w-5" />}
+            送信する
           </button>
           <p className="text-center text-[11px] text-slate-500">
-            送信後、担当より電話またはメールで確定のご連絡をいたします。
+            送信後、院長より電話またはInstagram DMにて確定のご連絡をいたします。
           </p>
         </form>
       </div>
@@ -300,15 +268,7 @@ export function BookingForm() {
   );
 }
 
-function Field({
-  label,
-  required,
-  children,
-}: {
-  label: string;
-  required?: boolean;
-  children: React.ReactNode;
-}) {
+function Field({ label, required, children }: { label: string; required?: boolean; children: React.ReactNode }) {
   return (
     <div>
       <label className="mb-2 block text-sm font-semibold text-slate-900">
@@ -320,52 +280,14 @@ function Field({
   );
 }
 
-function TextInput({
-  value,
-  onChange,
-  placeholder,
-  type = "text",
-  autoComplete,
-}: {
-  value: string;
-  onChange: (v: string) => void;
-  placeholder?: string;
-  type?: string;
-  autoComplete?: string;
+function TextInput({ value, onChange, placeholder, type = "text", autoComplete }: {
+  value: string; onChange: (v: string) => void; placeholder?: string; type?: string; autoComplete?: string;
 }) {
   return (
     <input
-      type={type}
-      value={value}
-      onChange={(e) => onChange(e.target.value)}
-      placeholder={placeholder}
-      autoComplete={autoComplete}
+      type={type} value={value} onChange={(e) => onChange(e.target.value)}
+      placeholder={placeholder} autoComplete={autoComplete}
       className="h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm focus:border-sky-500 focus:outline-none focus:ring-2 focus:ring-sky-200"
     />
-  );
-}
-
-function ChoiceButton({
-  active,
-  onClick,
-  children,
-}: {
-  active: boolean;
-  onClick: () => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={cn(
-        "flex h-11 items-center justify-center rounded-xl border px-3 text-sm font-medium transition-colors",
-        active
-          ? "border-sky-500 bg-sky-50 text-sky-900 ring-2 ring-sky-200"
-          : "border-slate-300 bg-white text-slate-700 hover:border-sky-400",
-      )}
-    >
-      {children}
-    </button>
   );
 }

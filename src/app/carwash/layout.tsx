@@ -5,7 +5,7 @@ import { StickyCta } from "./_components/sticky-cta";
 import { site } from "./data";
 
 export const metadata: Metadata = {
-  title: `${site.brand} | 渋谷の手洗い洗車・コーティング専門店`,
+  title: `${site.brand} | さいたま市岩槻区・塗装診断・コーティング専門`,
   description: site.catchCopy,
 };
 
