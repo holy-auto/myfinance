@@ -255,3 +255,57 @@ uvicorn app.main:app --reload
 ```bash
 pytest
 ```
+
+## 11. Next.js + Prisma フルスタック実装（拡張版）
+
+このリポジトリには、上記設計をベースとしたフルスタック実装も含まれています。
+
+### 起動方法
+
+```bash
+npm install
+npx prisma generate
+npx prisma migrate deploy   # マイグレーション適用
+npx prisma db seed         # 初期データ投入
+npm run dev
+```
+
+### 実装済みページ
+
+| カテゴリ | パス | 内容 |
+| --- | --- | --- |
+| ダッシュボード | `/` | 売上/粗利/営業利益/現金/売掛/買掛 + 月次推移 + 未突合明細 |
+| 仕訳 | `/journal` `/journal/new` `/journal/[id]` | 一覧・作成・承認フロー |
+| 勘定科目 | `/accounts` `/accounts/new` | 階層型の科目体系 |
+| 取引先 | `/counterparties` | 登録番号(インボイス)・支払条件・銀行情報 |
+| 部門 | `/departments` | 部門マスタ |
+| 事業区分 | `/business-units` | 事業セグメント |
+| プロジェクト | `/projects` | 案件単位 |
+| 自動仕訳ルール | `/journal-rules` | キーワード/取引先/金額範囲のマッチング |
+| 証憑 | `/attachments` | アップロード・OCRステータス・仕訳との関連付け |
+| CSV取込 | `/import` | 仕訳一括取込（プレビュー後確定） |
+| 銀行口座 | `/bank` | 預金/カード/電子マネー口座マスタ |
+| 銀行明細インポート | `/bank/import` | CSV取込 |
+| 銀行突合 | `/bank/match` | 自動・手動の仕訳突合 |
+| 予算 | `/budget` | 月次予算編成・前月コピー |
+| 月次締め | `/closing` | 期間ロック |
+| 試算表 | `/reports/trial-balance` | 期間指定 |
+| 損益計算書 | `/reports/pnl` | PL |
+| 貸借対照表 | `/reports/balance-sheet` | BS |
+| 総勘定元帳 | `/reports/general-ledger` | 元帳 |
+| 事業別PL | `/reports/segment` | セグメントPL |
+| 予実比較 | `/reports/budget-actual` | 年度x月の予実マトリクス |
+| キャッシュフロー | `/reports/cash-flow` | 簡易直接法CF |
+| ユーザー管理 | `/admin/users` | 招待・有効化・PWリセット・ロール付与 |
+| ロール一覧 | `/admin/roles` | 権限定義 |
+| 監査ログ | `/admin/audit-logs` | 全操作追跡（フィルタ付き） |
+| 設定 | `/settings` | アカウント・データ概況・コンプライアンス |
+
+### スキーマ拡張
+
+- `Counterparty`（取引先）: 登録番号・支払条件・銀行情報
+- `TaxRate`（税区分）: インボイス制度対応
+- `BankAccount` / `BankTransaction`: 銀行明細取込・突合
+- `JournalRule`: 自動仕訳ルール（キーワード・金額・取引先）
+- `JournalEntry.counterpartyId`: 仕訳に取引先紐付け
+
