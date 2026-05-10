@@ -41,6 +41,7 @@ model Account {
 
   journalLines  JournalLine[]
   budgetPlans   BudgetPlan[]
+  bankAccounts  BankAccount[]
 
   @@index([type])
   @@index([parentId])
@@ -76,6 +77,8 @@ model JournalEntry {
   fiscalYear     Int
   fiscalMonth    Int
   source         EntrySource   @default(MANUAL)
+  counterpartyId String?
+  counterparty   Counterparty? @relation(fields: [counterpartyId], references: [id])
   businessUnitId String?
   businessUnit   BusinessUnit? @relation(fields: [businessUnitId], references: [id])
   projectId      String?
@@ -89,13 +92,15 @@ model JournalEntry {
   createdAt      DateTime      @default(now())
   updatedAt      DateTime      @updatedAt
 
-  lines          JournalLine[]
-  attachments    EntryAttachment[]
+  lines             JournalLine[]
+  attachments       EntryAttachment[]
+  bankTransactions  BankTransaction[]
 
   @@index([fiscalYear, fiscalMonth])
   @@index([status])
   @@index([entryDate])
   @@index([createdById])
+  @@index([counterpartyId])
 }
 
 model JournalLine {
@@ -348,4 +353,138 @@ model BudgetPlan {
   updatedAt      DateTime      @updatedAt
 
   @@unique([fiscalYear, fiscalMonth, accountId, businessUnitId])
+}
+
+enum CounterpartyKind {
+  CUSTOMER
+  VENDOR
+  BOTH
+  OTHER
+}
+
+model Counterparty {
+  id              String           @id @default(uuid())
+  code            String           @unique
+  name            String
+  nameKana        String?
+  kind            CounterpartyKind @default(BOTH)
+  registrationNo  String?
+  email           String?
+  phone           String?
+  address         String?
+  bankInfo        String?
+  paymentTerms    String?
+  isActive        Boolean          @default(true)
+  notes           String?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  journalEntries JournalEntry[]
+  journalRules   JournalRule[]
+
+  @@index([code])
+  @@index([name])
+}
+
+enum TaxKind {
+  TAXABLE_SALES
+  TAXABLE_PURCHASE
+  EXEMPT
+  NON_TAXABLE
+  OUT_OF_SCOPE
+  REDUCED_SALES
+  REDUCED_PURCHASE
+}
+
+model TaxRate {
+  id          String   @id @default(uuid())
+  code        String   @unique
+  name        String
+  rate        Decimal
+  kind        TaxKind
+  effectiveFrom DateTime?
+  effectiveTo   DateTime?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+enum BankAccountType {
+  CHECKING
+  SAVINGS
+  CREDIT_CARD
+  E_MONEY
+  CASH
+}
+
+model BankAccount {
+  id            String          @id @default(uuid())
+  code          String          @unique
+  name          String
+  type          BankAccountType
+  bankName      String?
+  branchName    String?
+  accountNumber String?
+  linkedAccountId String?
+  linkedAccount Account?        @relation(fields: [linkedAccountId], references: [id])
+  openingBalance Decimal        @default(0)
+  isActive      Boolean         @default(true)
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+
+  transactions BankTransaction[]
+}
+
+enum BankTransactionStatus {
+  UNMATCHED
+  MATCHED
+  IGNORED
+}
+
+model BankTransaction {
+  id              String                @id @default(uuid())
+  bankAccountId   String
+  bankAccount     BankAccount           @relation(fields: [bankAccountId], references: [id])
+  txDate          DateTime
+  description     String
+  memo            String?
+  amountIn        Decimal               @default(0)
+  amountOut       Decimal               @default(0)
+  balance         Decimal?
+  status          BankTransactionStatus @default(UNMATCHED)
+  matchedJournalId String?
+  matchedJournal  JournalEntry?         @relation(fields: [matchedJournalId], references: [id])
+  externalId      String?
+  importBatchId   String?
+  createdAt       DateTime              @default(now())
+  updatedAt       DateTime              @updatedAt
+
+  @@index([bankAccountId, txDate])
+  @@index([status])
+  @@index([externalId])
+}
+
+model JournalRule {
+  id              String        @id @default(uuid())
+  name            String
+  priority        Int           @default(100)
+  isActive        Boolean       @default(true)
+  matchKeyword    String?
+  matchAmountMin  Decimal?
+  matchAmountMax  Decimal?
+  counterpartyId  String?
+  counterparty    Counterparty? @relation(fields: [counterpartyId], references: [id])
+  debitAccountId  String?
+  creditAccountId String?
+  taxCategory     String?
+  businessUnitId  String?
+  projectId       String?
+  description     String?
+  hitCount        Int           @default(0)
+  lastHitAt       DateTime?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  @@index([priority])
+  @@index([isActive])
 }

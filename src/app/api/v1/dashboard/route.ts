@@ -1,81 +1,160 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { Decimal } from "decimal.js";
 
 export async function GET() {
   const now = new Date();
   const currentYear = now.getFullYear();
   const currentMonth = now.getMonth() + 1;
-  const monthStart = new Date(currentYear, currentMonth - 1, 1);
   const monthEnd = new Date(currentYear, currentMonth, 0, 23, 59, 59);
   const yearStart = new Date(currentYear, 0, 1);
 
-  // 今月仕訳件数
-  const monthlyEntryCount = await prisma.journalEntry.count({
-    where: { fiscalYear: currentYear, fiscalMonth: currentMonth },
-  });
+  const [
+    monthlyEntryCount,
+    pendingCount,
+    closingPeriod,
+    revenueLines,
+    expenseLines,
+    cashLines,
+    receivableLines,
+    payableLines,
+    unmatchedTxCount,
+    activeRulesCount,
+    counterpartyCount,
+    bankAccountCount,
+    monthlyTrendRaw,
+  ] = await Promise.all([
+    prisma.journalEntry.count({
+      where: { fiscalYear: currentYear, fiscalMonth: currentMonth },
+    }),
+    prisma.journalEntry.count({ where: { status: "PENDING_APPROVAL" } }),
+    prisma.closingPeriod.findUnique({
+      where: { fiscalYear_fiscalMonth: { fiscalYear: currentYear, fiscalMonth: currentMonth } },
+    }),
+    prisma.journalLine.findMany({
+      where: {
+        journalEntry: { entryDate: { gte: yearStart, lte: monthEnd }, status: "APPROVED" },
+        account: { type: "REVENUE" },
+      },
+      include: { account: { select: { code: true } } },
+    }),
+    prisma.journalLine.findMany({
+      where: {
+        journalEntry: { entryDate: { gte: yearStart, lte: monthEnd }, status: "APPROVED" },
+        account: { type: "EXPENSE" },
+      },
+      include: { account: { select: { code: true } } },
+    }),
+    prisma.journalLine.findMany({
+      where: {
+        journalEntry: { entryDate: { lte: monthEnd }, status: "APPROVED" },
+        account: { code: { in: ["1100", "1110", "1120"] } },
+      },
+    }),
+    prisma.journalLine.findMany({
+      where: {
+        journalEntry: { entryDate: { lte: monthEnd }, status: "APPROVED" },
+        account: { code: "1200" },
+      },
+    }),
+    prisma.journalLine.findMany({
+      where: {
+        journalEntry: { entryDate: { lte: monthEnd }, status: "APPROVED" },
+        account: { code: "2100" },
+      },
+    }),
+    prisma.bankTransaction.count({ where: { status: "UNMATCHED" } }),
+    prisma.journalRule.count({ where: { isActive: true } }),
+    prisma.counterparty.count({ where: { isActive: true } }),
+    prisma.bankAccount.count({ where: { isActive: true } }),
+    Promise.all(
+      Array.from({ length: 6 }, (_, i) => {
+        const d = new Date(currentYear, currentMonth - 1 - (5 - i), 1);
+        const y = d.getFullYear();
+        const m = d.getMonth() + 1;
+        const mStart = new Date(y, m - 1, 1);
+        const mEnd = new Date(y, m, 0, 23, 59, 59);
+        return Promise.all([
+          prisma.journalLine.findMany({
+            where: {
+              journalEntry: { entryDate: { gte: mStart, lte: mEnd }, status: "APPROVED" },
+              account: { type: "REVENUE" },
+            },
+            select: { debit: true, credit: true },
+          }),
+          prisma.journalLine.findMany({
+            where: {
+              journalEntry: { entryDate: { gte: mStart, lte: mEnd }, status: "APPROVED" },
+              account: { type: "EXPENSE" },
+            },
+            select: { debit: true, credit: true },
+          }),
+        ]).then(([rev, exp]) => ({ y, m, rev, exp }));
+      })
+    ),
+  ]);
 
-  // 承認待ち
-  const pendingCount = await prisma.journalEntry.count({
-    where: { status: "PENDING_APPROVAL" },
-  });
+  const sumLines = (lines: { debit: { toString(): string }; credit: { toString(): string } }[]) =>
+    lines.reduce(
+      (s, l) =>
+        s.plus(new Decimal(l.debit.toString())).minus(new Decimal(l.credit.toString())),
+      new Decimal(0)
+    );
 
-  // 今月の月次締めステータス
-  const closingPeriod = await prisma.closingPeriod.findUnique({
-    where: { fiscalYear_fiscalMonth: { fiscalYear: currentYear, fiscalMonth: currentMonth } },
-  });
+  const totalRevenue = revenueLines
+    .reduce(
+      (s, l) => s.plus(new Decimal(l.credit.toString())).minus(new Decimal(l.debit.toString())),
+      new Decimal(0)
+    )
+    .toNumber();
 
-  // 当期売上・費用 (承認済みのみ)
-  const revenueLines = await prisma.journalLine.findMany({
-    where: {
-      journalEntry: { entryDate: { gte: yearStart, lte: monthEnd }, status: "APPROVED" },
-      account: { type: "REVENUE" },
-    },
-    include: { account: { select: { code: true } } },
-  });
-  const expenseLines = await prisma.journalLine.findMany({
-    where: {
-      journalEntry: { entryDate: { gte: yearStart, lte: monthEnd }, status: "APPROVED" },
-      account: { type: "EXPENSE" },
-    },
-    include: { account: { select: { code: true } } },
-  });
-
-  const totalRevenue = revenueLines.reduce((s, l) => s + Number(l.credit) - Number(l.debit), 0);
-  const totalCostOfSales = expenseLines.filter((l) => l.account.code.startsWith("5")).reduce((s, l) => s + Number(l.debit) - Number(l.credit), 0);
-  const totalSga = expenseLines.filter((l) => l.account.code.startsWith("6")).reduce((s, l) => s + Number(l.debit) - Number(l.credit), 0);
-  const totalExpense = expenseLines.reduce((s, l) => s + Number(l.debit) - Number(l.credit), 0);
+  const totalCostOfSales = expenseLines
+    .filter((l) => l.account.code.startsWith("5"))
+    .reduce(
+      (s, l) => s.plus(new Decimal(l.debit.toString())).minus(new Decimal(l.credit.toString())),
+      new Decimal(0)
+    )
+    .toNumber();
+  const totalSga = expenseLines
+    .filter((l) => l.account.code.startsWith("6"))
+    .reduce(
+      (s, l) => s.plus(new Decimal(l.debit.toString())).minus(new Decimal(l.credit.toString())),
+      new Decimal(0)
+    )
+    .toNumber();
+  const totalExpense = expenseLines
+    .reduce(
+      (s, l) => s.plus(new Decimal(l.debit.toString())).minus(new Decimal(l.credit.toString())),
+      new Decimal(0)
+    )
+    .toNumber();
   const grossProfit = totalRevenue - totalCostOfSales;
   const operatingProfit = grossProfit - totalSga;
 
-  // 普通預金残高
-  const cashLines = await prisma.journalLine.findMany({
-    where: {
-      journalEntry: { entryDate: { lte: monthEnd }, status: "APPROVED" },
-      account: { code: { in: ["1100", "1110", "1120"] } },
-    },
+  const cashBalance = sumLines(cashLines).toNumber();
+  const receivableBalance = sumLines(receivableLines).toNumber();
+  const payableBalance = -sumLines(payableLines).toNumber();
+
+  const monthlyTrend = monthlyTrendRaw.map(({ y, m, rev, exp }) => {
+    const revenue = rev
+      .reduce(
+        (s, l) => s.plus(new Decimal(l.credit.toString())).minus(new Decimal(l.debit.toString())),
+        new Decimal(0)
+      )
+      .toNumber();
+    const expense = exp
+      .reduce(
+        (s, l) => s.plus(new Decimal(l.debit.toString())).minus(new Decimal(l.credit.toString())),
+        new Decimal(0)
+      )
+      .toNumber();
+    return {
+      month: `${y}/${String(m).padStart(2, "0")}`,
+      revenue,
+      expense,
+      profit: revenue - expense,
+    };
   });
-  const cashBalance = cashLines.reduce((s, l) => s + Number(l.debit) - Number(l.credit), 0);
-
-  // 月次推移 (直近6ヶ月)
-  const monthlyTrend = [];
-  for (let i = 5; i >= 0; i--) {
-    const d = new Date(currentYear, currentMonth - 1 - i, 1);
-    const y = d.getFullYear();
-    const m = d.getMonth() + 1;
-    const mStart = new Date(y, m - 1, 1);
-    const mEnd = new Date(y, m, 0, 23, 59, 59);
-
-    const revLines = await prisma.journalLine.findMany({
-      where: { journalEntry: { entryDate: { gte: mStart, lte: mEnd }, status: "APPROVED" }, account: { type: "REVENUE" } },
-    });
-    const expLines = await prisma.journalLine.findMany({
-      where: { journalEntry: { entryDate: { gte: mStart, lte: mEnd }, status: "APPROVED" }, account: { type: "EXPENSE" } },
-    });
-    const rev = revLines.reduce((s, l) => s + Number(l.credit) - Number(l.debit), 0);
-    const exp = expLines.reduce((s, l) => s + Number(l.debit) - Number(l.credit), 0);
-
-    monthlyTrend.push({ month: `${y}/${String(m).padStart(2, "0")}`, revenue: rev, expense: exp, profit: rev - exp });
-  }
 
   return NextResponse.json({
     monthlyEntryCount,
@@ -86,6 +165,12 @@ export async function GET() {
     grossProfit,
     operatingProfit,
     cashBalance,
+    receivableBalance,
+    payableBalance,
+    unmatchedTxCount,
+    activeRulesCount,
+    counterpartyCount,
+    bankAccountCount,
     monthlyTrend,
   });
 }
